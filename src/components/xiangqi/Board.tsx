@@ -9,7 +9,10 @@ import {
   type Pos,
   K,
 } from "@/lib/xiangqi/engine";
+import { MoveFxLayer, type MoveBurst, type MoveBurstKind } from "@/components/xiangqi/MoveFx";
 import { cn } from "@/lib/utils";
+
+export type { MoveBurst, MoveBurstKind };
 
 const PAD = 30;
 const CELL = 40;
@@ -180,6 +183,7 @@ type BoardProps = {
   hint: { from: number; to: number } | null;
   inCheck: boolean;
   interactive: boolean;
+  burst: MoveBurst | null;
   onSquare: (sq: number) => void;
 };
 
@@ -193,10 +197,13 @@ export function Board({
   hint,
   inCheck,
   interactive,
+  burst,
   onSquare,
 }: BoardProps) {
   const legalTo = new Set(legal.map((m) => m.to));
   const kingSq = inCheck ? pos.kings[pos.side === 0 ? 0 : 1] : -1;
+  const landId = burst ? ids[burst.to] ?? 0 : 0;
+  const shake = burst && (burst.captured || burst.kind === "check" || burst.kind === "mate");
 
   const pieces: Array<{ sq: number; code: number; id: number }> = [];
   for (let sq = 0; sq < SQUARES; sq++) {
@@ -206,7 +213,7 @@ export function Board({
 
   return (
     <div className="xq-board-frame">
-      <div className="xq-board">
+      <div className={cn("xq-board", shake && "is-shake")}>
         <Grid flipped={flipped} />
         <FileLabels flipped={flipped} />
         {lastMove ? (
@@ -250,6 +257,7 @@ export function Board({
           const red = pieceSide(p.code) === 0;
           const selectedHere = selected === p.sq;
           const checked = kingSq === p.sq && pieceType(p.code) === K;
+          const landing = landId !== 0 && p.id === landId;
           return (
             <button
               key={p.id}
@@ -259,6 +267,7 @@ export function Board({
                 red ? "xq-piece-red" : "xq-piece-black",
                 selectedHere && "xq-piece-sel",
                 checked && "xq-piece-check",
+                landing && "xq-piece-land",
               )}
               style={{
                 left: `${(x / VB_W) * 100}%`,
@@ -268,12 +277,15 @@ export function Board({
               aria-label={`${red ? "红" : "黑"} ${PIECE_CHAR[p.code]}`}
               onClick={() => onSquare(p.sq)}
             >
-              <span className="xq-piece-ring">
+              <span className="xq-piece-ring" key={landing ? `land-${burst?.id}` : "ring"}>
                 <span className="xq-piece-face">{PIECE_CHAR[p.code]}</span>
               </span>
             </button>
           );
         })}
+        {burst ? (
+          <MoveFxLayer key={burst.id} burst={burst} flipped={flipped} kingSq={kingSq} />
+        ) : null}
       </div>
     </div>
   );

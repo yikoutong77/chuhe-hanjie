@@ -7,7 +7,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { Board } from "@/components/xiangqi/Board";
+import { Board, type MoveBurst, type MoveBurstKind } from "@/components/xiangqi/Board";
 import {
   CapturedRow,
   ConfirmOverlay,
@@ -45,6 +45,7 @@ import {
   legalFrom,
   outcome,
   pieceSide,
+  pieceType,
   startPos,
   toFen,
   type Move,
@@ -86,6 +87,7 @@ export function GameApp() {
   const [history, setHistory] = useState<Hist[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [lastMove, setLastMove] = useState<{ from: number; to: number } | null>(null);
+  const [burst, setBurst] = useState<MoveBurst | null>(null);
   const [hint, setHint] = useState<{ from: number; to: number } | null>(null);
   const [thinking, setThinking] = useState(false);
   const [hinting, setHinting] = useState(false);
@@ -102,8 +104,32 @@ export function GameApp() {
   const ridRef = useRef(0);
   const jobRef = useRef(0);
   const scoredRef = useRef(false);
+  const burstIdRef = useRef(0);
 
   type WorkerOut = { requestId: number; from: number; to: number };
+
+  const fireBurst = useCallback(
+    (from: number, to: number, piece: number, red: boolean, next: Pos, victim: number) => {
+      const end = outcome(next);
+      const captured = victim !== 0;
+      let kind: MoveBurstKind = "move";
+      if (end.over && (end.reason === "checkmate" || end.reason === "stalemate")) kind = "mate";
+      else if (end.inCheck) kind = "check";
+      else if (captured) kind = "capture";
+      burstIdRef.current += 1;
+      setBurst({
+        id: burstIdRef.current,
+        from,
+        to,
+        kind,
+        red,
+        piece,
+        captured,
+        victim,
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     const data = loadSave();
@@ -233,7 +259,10 @@ export function GameApp() {
       }
       const next = applyMove(current, reply.from, reply.to);
       const notation = formatMove(current, { from: reply.from, to: reply.to });
-      const captured = current.board[reply.to] !== 0;
+      const victim = current.board[reply.to] ?? 0;
+      const captured = victim !== 0;
+      const moving = current.board[reply.from]!;
+      fireBurst(reply.from, reply.to, pieceType(moving), pieceSide(moving) === RED, next, victim);
       if (captured) playCapture();
       else playMove();
       const nextIds = shiftIds(currentIds, reply.from, reply.to);
@@ -255,7 +284,7 @@ export function GameApp() {
       setThinking(false);
       finishIfOver(next, side, diff);
     },
-    [askAi, finishIfOver, persistGame],
+    [askAi, finishIfOver, persistGame, fireBurst],
   );
 
   const begin = useCallback(
@@ -265,6 +294,7 @@ export function GameApp() {
       setOverlay("none");
       setHint(null);
       setSelected(null);
+      setBurst(null);
       jobRef.current += 1;
       if (resume && save.game) {
         const g = save.game;
@@ -298,6 +328,7 @@ export function GameApp() {
       setIds(nextIds);
       setHistory([]);
       setLastMove(null);
+      setBurst(null);
       setScreen("play");
       persistGame(next, [], null, side, diff);
       if (side === "black") {
@@ -324,7 +355,9 @@ export function GameApp() {
     if (selected != null) {
       const mv = legal.find((m) => m.to === sq);
       if (mv) {
-        const captured = pos.board[mv.to] !== 0;
+        const victim = pos.board[mv.to] ?? 0;
+        const captured = victim !== 0;
+        const moving = pos.board[mv.from]!;
         const notation = formatMove(pos, mv);
         const next = applyMove(pos, mv.from, mv.to);
         const nextIds = shiftIds(ids, mv.from, mv.to);
@@ -340,13 +373,19 @@ export function GameApp() {
         setIds(nextIds);
         setHistory(nextHist);
         setLastMove({ from: mv.from, to: mv.to });
+        fireBurst(mv.from, mv.to, pieceType(moving), pieceSide(moving) === RED, next, victim);
         setSelected(null);
         setHint(null);
         if (captured) playCapture();
         else playMove();
         persistGame(next, nextHist, { from: mv.from, to: mv.to }, playerSide, difficulty);
         if (!finishIfOver(next, playerSide, difficulty)) {
-          void runAi(next, nextIds, playerSide, difficulty);
+          const scheduled = jobRef.current;
+          const wait = captured ? 680 : 320;
+          window.setTimeout(() => {
+            if (scheduled !== jobRef.current) return;
+            void runAi(next, nextIds, playerSide, difficulty);
+          }, wait);
         }
         return;
       }
@@ -375,6 +414,7 @@ export function GameApp() {
     setIds(restoredIds);
     setHistory(nextHist);
     setLastMove(prev ? { from: prev.from, to: prev.to } : null);
+    setBurst(null);
     setSelected(null);
     setHint(null);
     setOverlay("none");
@@ -462,6 +502,7 @@ export function GameApp() {
               hint={hint}
               inCheck={status.inCheck && !status.over}
               interactive={playerTurn}
+              burst={burst}
               onSquare={onSquare}
             />
 
